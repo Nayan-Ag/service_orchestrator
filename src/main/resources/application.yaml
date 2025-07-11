@@ -1,0 +1,17 @@
+server:
+  port: 3007
+
+spring:
+  application:
+    name: service_orchestrator
+  data:
+    mongodb:
+      host: localhost
+      port: 27017
+      database: service_orchestrator
+
+env:
+  name: local
+
+tenant:
+  name: workflow_hrms

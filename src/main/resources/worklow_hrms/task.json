@@ -1,0 +1,12 @@
+[
+  {
+    "_id": "64a1f8c9a1234567890abcd1",
+    "slug": "get_all_employees",
+    "is_secured": false
+  },
+  {
+    "_id": "64a1f8c9a1234567890abcd2",
+    "slug": "add_employee",
+    "is_secured": true
+  }
+]

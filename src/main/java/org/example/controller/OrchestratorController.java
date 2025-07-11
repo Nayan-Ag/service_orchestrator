@@ -2,12 +2,9 @@ package org.example.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.example.service.LoggingService;
 import org.example.service.OrchestratorService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
@@ -16,21 +13,32 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class OrchestratorController {
 
-    // Services
-    private final OrchestratorService orchestratorService ;
+    private final OrchestratorService orchestratorService;
 
-    // Post Request, received;
+    /**
+     * Handles all POST requests to the orchestrator endpoint.
+     * Accepts dynamic slug, body, headers, and query parameters.
+     *
+     * @param request       raw HttpServletRequest for metadata (URL, method)
+     * @param slug          identifier for the workflow
+     * @param requestBody   payload body (optional)
+     * @param headers       incoming headers
+     * @param queryParams   incoming query params
+     * @return              success or error response
+     */
     @PostMapping
     public ResponseEntity<Object> handleRequest(
             HttpServletRequest request,
             @RequestParam String slug,
             @RequestBody(required = false) Map<String, Object> requestBody,
-            @RequestHeader Map<String, String> headers,
-            @RequestParam(required = false) Map<String, String> queryParams
+            @RequestHeader Map<String, Object> headers,
+            @RequestParam(required = false) Map<String, Object> queryParams
     ) {
         try {
-            orchestratorService.fetchTask(request, slug , headers, queryParams , requestBody);
-            return ResponseEntity.ok("Success");
+            // Call orchestrator
+            Object result = orchestratorService.callHttpRequest(slug, headers, queryParams, requestBody , request);
+            return ResponseEntity.ok(result);
+
         } catch (Exception e) {
             return ResponseEntity.status(500).body("Error: " + e.getMessage());
         }

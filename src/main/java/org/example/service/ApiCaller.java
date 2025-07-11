@@ -2,8 +2,13 @@ package org.example.service;
 
 import org.example.model.Api;
 import org.example.model.WorkflowSteps;
+import org.springframework.http.HttpEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.http.*;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,120 +16,202 @@ import java.util.Map;
 @Service
 public class ApiCaller {
 
-    private Api rootApi;
-    private WorkflowSteps rootSteps;
-    private Map<String, Object> rootWorkflowContext;
+    /* =======================
+       ——— Instance Variables —
+       ======================= */
+    private Api               apiMeta;              // API definition from DB
+    private WorkflowSteps     stepMeta;             // Step definition (validators, etc.)
+    private Map<String, Object> workflowContext;    // Shared context for chained APIs
 
-    public Object callApi(Api api , WorkflowSteps steps, Map<String, Object> workflowContext) {
-        rootApi = api;
-        rootSteps = steps;
-        rootWorkflowContext = workflowContext;
+    private Map<String, Object> reqHeaders;         // Incoming request headers
+    private Map<String, Object> reqQuery;           // Incoming query params
+    private Map<String, Object> reqBody;            // Incoming body (already parsed)
 
-        if(steps.getRequestValidate() != null){
-            if(RequestValidation()){
-                makePayload();
-            };
+    /* ==================================================
+       ——— Public entry point called by Orchestrator ———
+       ================================================== */
+    public Map<String, Object> callApi(Api api,
+                          WorkflowSteps step,
+                          Map<String, Object> context,
+                          Map<String, Object> headers,
+                          Map<String, Object> query,
+                          Map<String, Object> body) {
+
+        // Bind instance state
+        this.apiMeta         = api;
+        this.stepMeta        = step;
+        this.workflowContext = context;
+        this.reqHeaders      = headers != null ? headers : new HashMap<>();
+        this.reqQuery        = query   != null ? query   : new HashMap<>();
+        this.reqBody         = body    != null ? body    : new HashMap<>();
+
+        if (step.getRequestValidate() != null && !requestValidation()) {
+            throw new RuntimeException("Request validation failed for API: " + api.getApiName());
         }
-        return  "200";
+        PayloadBuckets payload = buildPayload();
+        Object apiResult = makeHttpCall(api.getApiUrl() , api.getApiMethod() , payload);
+        workflowContext.put(api.getApiName(), apiResult);
+
+        /* —— 4. Optional response validation —— */
+        if (step.getResponseValidate() != null && !responseValidation(apiResult)) {
+            throw new RuntimeException("Response validation failed for API: " + api.getApiName());
+        }
+
+        Map<String , Object> result = new HashMap<>();
+        result.put(api.getApiName() , apiResult);
+        return result;
     }
 
-    public boolean RequestValidation(){
-        Object requestValidate = rootSteps.getRequestValidate();
+    /* ==================================================
+       ——— Validation Stubs (extend later) ———
+       ================================================== */
+    private boolean requestValidation() {
+        // TODO: implement your validation logic against stepMeta.getRequestValidate()
         return true;
     }
 
-    public boolean Compare(String comparator){
-        switch (comparator){
-            case "==" :
-                System.out.println("YES");
-                return true;
-
-            case "!=" :
-                System.out.println("YES");
-                return true;
-
-            case "not in":
-                System.out.println("YES");
-                return true;
-
-            case "in":
-                System.out.println("YES");
-                return  true;
-
-            default:
-                throw  new IllegalArgumentException("Unsupported Comparator");
-        }
-
+    private boolean responseValidation(Object response) {
+        // TODO: implement your validation logic against stepMeta.getResponseValidate()
+        return true;
     }
 
-
-    public void ResponseValidation() {
-
+    /* ==================================================
+       ——— Comparator utility for validations ———
+       ================================================== */
+    private boolean compare(Object left, String comparator, Object right) {
+        return switch (comparator) {
+            case "==", "equals"      -> left == null ? right == null : left.equals(right);
+            case "!=", "<>", "not equals" -> left == null ? right != null : !left.equals(right);
+            case "in"                -> right instanceof List<?> lst && lst.contains(left);
+            case "not in"            -> right instanceof List<?> lst && !lst.contains(left);
+            default -> throw new IllegalArgumentException("Unsupported comparator: " + comparator);
+        };
     }
 
-    /**
-     * Build the payload for one workflow step.
-     *
-     * @param step          the current WorkflowSteps definition (from DB)
-     * @param context       shared context -> every previous API response is stored here
-     * @param rawBody       original request body (from the user)
-     * @param rawQuery      original query params (from the user)
-     * @param rawHeaders    original headers (from the user)
-     */
-    public void makePayload(WorkflowSteps step,
-                                       Map<String, Object> context,
-                                       Map<String, Object> rawBody,
-                                       Map<String, String> rawQuery,
-                                       Map<String, String> rawHeaders) {
+    /* ==================================================
+       ——— Build outbound payload per step definition ———
+       ================================================== */
+    private PayloadBuckets buildPayload() {
 
-        Map<String, Object> body = new HashMap<>();
-        Map<String, String> query = new HashMap<>();
-        Map<String, String> header = new HashMap<>();
-        Map<String, String> path = new HashMap<>();
+        Map<String, Object> bodyBucket   = new HashMap<>();
+        Map<String, String> queryBucket  = new HashMap<>();
+        Map<String, String> headerBucket = new HashMap<>();
+        Map<String, String> pathBucket   = new HashMap<>();
 
-        /*
-         * Each item in step.getPayload() is expected to be a Map with keys like:
-         *   name            : "customerId"            // parameter name to send
-         *   data_from       : "body" | "query" | "header" | "path" | "response"
-         *   data_from_api   : "get_user"              // required only if data_from == response
-         *   key             : "cust_id"               // the key to extract from the source map/JSON
-         *   send_param_in   : "query" | "header" | "body" | "path"
-         */
-        for (Map<String, Object> field : rootApi.getPayload()) {
+        for (Map<String, Object> field : apiMeta.getPayload()) {
+            String dataFrom = ((String) field.get("data_from")).toLowerCase();
+            String sendIn   = ((String) field.getOrDefault("send_param_in", "body")).toLowerCase();
 
-            String targetName = (String) field.get("name");
-            String dataFrom = (String) field.get("data_from");
-            String sendIn = (String) field.getOrDefault("send_param_in", "body");
-            String key = (String) field.get("key");
-            String value = (String) field.get("value");
+            String sourceApi = (String) field.get("data_from_api");  // only for data_from == response
+            String key       = (String) field.get("key");            // key to extract from source
+            String Val = (String) field.get("value");          // for data_from == static
 
-            switch (dataFrom) {
-                case "body" -> key = rawBody.get(value);
-                case "query" -> key = rawQuery.get(value);
-                case "header" -> key = rawHeaders.get(value);
-                case "path" -> key = rawBody.get(value); // adjust if you store path vars elsewhere
-                case "response" -> {
-                    String apiKey = (String) field.get("data_from_api");
-                    Object resp = context.get(apiKey);
-                    if (resp instanceof Map<?, ?> mapResp) {
-                        key = mapResp.get(keyInSource);
-                    }
-                }
-                default -> throw new IllegalArgumentException("Unsupported data_from: " + dataFrom);
-            }
+            /* ---- Extract the value from the correct place ---- */
+            Object extracted = extractValue(dataFrom, sourceApi, Val);
 
-            // ---- route to target bucket ------------------------------------
-            if (value != null) {
+            /* ---- Route to the correct bucket ---- */
+            if (extracted != null) {
                 switch (sendIn) {
-                    case "body" -> body.put(targetName, value);
-                    case "query" -> query.put(targetName, String.valueOf(value));
-                    case "header" -> header.put(targetName, String.valueOf(value));
-                    case "path" -> path.put(targetName, String.valueOf(value));
+                    case "body"   -> bodyBucket.put(key, extracted);
+                    case "query"  -> queryBucket.put(key, String.valueOf(extracted));
+                    case "header" -> headerBucket.put(key, String.valueOf(extracted));
+                    case "path"   -> pathBucket.put(key, String.valueOf(extracted));
                     default -> throw new IllegalArgumentException("Unsupported send_param_in: " + sendIn);
                 }
-            } else if (Boolean.TRUE.equals(field.get("required"))) {
-                throw new RuntimeException("Missing required payload param: " + targetName);
+            } else {
+                throw new RuntimeException("Missing required param '" + key + "' for API " + apiMeta.getApiName());
             }
         }
+        return new PayloadBuckets(bodyBucket, queryBucket, headerBucket, pathBucket);
     }
+
+    /* ==================================================
+       ——— Helper: extract value based on data_from ———
+       ================================================== */
+    private Object extractValue(String dataFrom,
+                                String sourceApi,
+                                String Val) {
+
+        return switch (dataFrom) {
+            case "body"    -> reqBody.get(Val);
+            case "query"   -> reqQuery.get(Val);
+            case "header"  -> reqHeaders.get(Val);
+            case "static"  -> Val;
+            case "response" -> {
+                Object resp = workflowContext.get(sourceApi);              // previous API response
+                if (resp instanceof Map<?,?> map) {
+                    yield map.get(Val);
+                }
+                yield null;
+            }
+            default -> throw new IllegalStateException("Unexpected data_from: " + dataFrom);
+        };
+    }
+
+    private Object makeHttpCall(String url, String method, PayloadBuckets payload) {
+
+        RestTemplate restTemplate = new RestTemplate();
+
+        // Build headers
+        HttpHeaders httpHeaders = new HttpHeaders();
+        httpHeaders.setAll(payload.headers());
+
+        /* ── 1. Inject path variables ─────────────────────────── */
+        // Example: url = "https://api.example.com/user/{userId}/order/{orderId}"
+        String resolvedUrl = url;
+
+        // Append all path segments directly to the base URL
+        if (!payload.path().isEmpty()) {
+            StringBuilder pathBuilder = new StringBuilder();
+            for (String pathValue : payload.path().values()) {
+                String encoded = UriUtils.encodePath(pathValue, StandardCharsets.UTF_8);
+                pathBuilder.append("/").append(encoded);
+            }
+
+            // Final URL = base + path
+            resolvedUrl = resolvedUrl.endsWith("/")
+                    ? resolvedUrl.substring(0, resolvedUrl.length() - 1)
+                    : resolvedUrl;
+            resolvedUrl += pathBuilder.toString();
+        }
+
+        // Attach query params to URL
+        String finalUrl = resolvedUrl;
+        if (!payload.query().isEmpty()) {
+            StringBuilder queryString = new StringBuilder("?");
+            payload.query().forEach((k, v) -> queryString.append(k).append("=").append(v).append("&"));
+            finalUrl += queryString.substring(0, queryString.length() - 1);
+        }
+
+        // Create request entity
+        HttpEntity<?> requestEntity = switch (method.toUpperCase()) {
+            case "GET", "DELETE" -> new HttpEntity<>(httpHeaders); // No body
+            case "POST", "PUT", "PATCH" -> new HttpEntity<>(payload.body(), httpHeaders);
+            default -> throw new IllegalArgumentException("Unsupported method: " + method);
+        };
+
+        // Choose correct HTTP method
+        HttpMethod httpMethod = HttpMethod.valueOf(method.toUpperCase());
+        if (httpMethod == null) {
+            throw new IllegalArgumentException("Invalid HTTP method: " + method);
+        }
+
+        // Make the call
+        ResponseEntity<Map> response = restTemplate.exchange(
+                finalUrl,
+                httpMethod,
+                requestEntity,
+                Map.class
+        );
+
+        return response.getBody(); // You can also log status, headers if needed
+    }
+
+    /* ==================================================
+       ——— Small DTO for payload buckets ———
+       ================================================== */
+    private record PayloadBuckets(Map<String, Object> body,
+                                  Map<String, String> query,
+                                  Map<String, String> headers,
+                                  Map<String, String> path) {}
 }

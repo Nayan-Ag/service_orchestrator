@@ -5,22 +5,22 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Logs important application startup information such as server port.
+ * Utility component to log important startup information such as server port.
  */
 @Component
 public class StartupLogger {
 
     /**
-     * Injected server port value from application.properties or environment.
+     * Injected server port from application properties.
      */
     @Value("${server.port}")
     private String serverPort;
 
     /**
-     * Method executed after bean construction to log the active server port.
+     * Logs the active server port on application startup.
      */
     @PostConstruct
-    public void logPort() {
-        System.out.println("✅ Server running on port: " + serverPort);
+    public void logServerPort() {
+        System.out.println("[App] ✅ Server started on port: " + serverPort);
     }
 }

@@ -2,76 +2,82 @@ package org.example.utils;
 
 import lombok.RequiredArgsConstructor;
 import org.bson.types.ObjectId;
-import org.example.model.Api;
-import org.example.model.Task;
-import org.example.model.Workflow;
-import org.example.model.WorkflowSteps;
-import org.example.repository.ApiRepository;
-import org.example.repository.TaskRepository;
-import org.example.repository.WorkflowRepository;
+import org.example.model.*;
+import org.example.repository.*;
 import org.springframework.stereotype.Component;
 
 /**
- * Utility class for fetching workflow-related data
- * from MongoDB repositories such as Task, Workflow, and Api.
+ * Utility component for resolving tasks, workflows, APIs, and workflow steps.
+ * Acts as a centralized lookup helper for orchestration operations.
  */
 @Component
 @RequiredArgsConstructor
 public class WorkflowUtils {
 
-    private final TaskRepository taskRepository;
-    private final WorkflowRepository workflowRepository;
-    private final ApiRepository apiRepository;
+    private final TaskRepository taskRepo;
+    private final WorkflowRepository wfRepo;
+    private final ApiRepository apiRepo;
 
     /**
-     * Fetches a Task by its unique slug.
+     * Retrieves a Task by its unique slug.
      *
-     * @param slug the unique slug identifier for the task
-     * @return the Task object from MongoDB
-     * @throws RuntimeException if the slug is invalid or not found
+     * @param slug the slug identifier for the task
+     * @return the matching Task object
+     * @throws RuntimeException if slug is null or task not found
      */
-    public Task getTaskBySlug(String slug) {
-        return taskRepository.findBySlug(slug)
-                .orElseThrow(() -> new RuntimeException("Invalid Slug: " + slug));
+    public Task fetchTaskBySlug(String slug) {
+        if (slug == null) {
+            throw new RuntimeException("Slug is null");
+        }
+        return taskRepo.findBySlug(slug)
+                .orElseThrow(() -> new RuntimeException("Task not found for slug"));
     }
 
     /**
-     * Retrieves the Workflow associated with a given ObjectId.
+     * Retrieves a Workflow using its MongoDB ObjectId.
      *
-     * @param _id the ObjectId of the workflow
-     * @return the Workflow object
-     * @throws RuntimeException if no workflow exists for the given ID
+     * @param workflowId the ObjectId of the workflow
+     * @return the corresponding Workflow object
+     * @throws RuntimeException if workflowId is null or not found
      */
-    public Workflow getWorkflowById(ObjectId _id) {
-        return workflowRepository.findById(_id)
-                .orElseThrow(() -> new RuntimeException("Workflow does not exist for ID: " + _id));
+    public Workflow fetchWorkflowById(ObjectId workflowId) {
+        if (workflowId == null) {
+            throw new RuntimeException("Workflow id is null");
+        }
+        return wfRepo.findById(workflowId)
+                .orElseThrow(() -> new RuntimeException("Workflow not found"));
     }
 
     /**
-     * Fetches an API definition using its unique API name.
+     * Fetches the API metadata for a given API name.
      *
-     * @param apiName the name of the API
-     * @return the Api object from MongoDB
-     * @throws RuntimeException if the API is not found
+     * @param api the name of the API
+     * @return the corresponding Api object
+     * @throws RuntimeException if API name is null or not found
      */
-    public Api getApiByApiName(String apiName) {
-        return apiRepository.findByApiName(apiName)
-                .orElseThrow(() -> new RuntimeException("API does not exist: " + apiName));
+    public Api fetchApiByName(String api) {
+        if (api == null) {
+            throw new RuntimeException("Api Name is null");
+        }
+        return apiRepo.findByApiName(api)
+                .orElseThrow(() -> new RuntimeException("API not found"));
     }
 
     /**
-     * Finds a specific WorkflowStep from a Workflow using the API name.
+     * Finds a specific step in the workflow that matches the given API name.
      *
-     * @param workflow the workflow to search within
-     * @param apiName  the name of the API to match
+     * @param wf  the Workflow object containing the steps
+     * @param api the name of the API to find
      * @return the matching WorkflowSteps object
-     * @throws RuntimeException if the step is not found
+     * @throws RuntimeException if API name is null or step not found
      */
-    public WorkflowSteps getWorkFlowStepsByApiname(Workflow workflow, String apiName) {
-        return workflow.getSteps()
-                .stream()
-                .filter(step -> apiName.equals(step.getApiName()))
+    public WorkflowSteps fetchStepByApiName(Workflow wf, String api) {
+        if (api == null) {
+            throw new RuntimeException("API name is null while resolving next step");
+        }
+        return wf.getSteps().stream()
+                .filter(s -> api.equals(s.getApiName()))
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("Workflow step not found for API: " + apiName));
+                .orElseThrow(() -> new RuntimeException("Step not found for API"));
     }
 }

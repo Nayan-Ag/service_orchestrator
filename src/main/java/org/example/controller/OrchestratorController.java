@@ -6,8 +6,14 @@ import org.example.service.OrchestratorService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Handles all incoming orchestrated workflow requests.
+ * Delegates processing to {@link OrchestratorService} based on the provided slug.
+ */
 @RestController
 @RequestMapping("/")
 @RequiredArgsConstructor
@@ -16,31 +22,38 @@ public class OrchestratorController {
     private final OrchestratorService orchestratorService;
 
     /**
-     * Handles all POST requests to the orchestrator endpoint.
-     * Accepts dynamic slug, body, headers, and query parameters.
+     * Endpoint to execute dynamic API workflows.
      *
-     * @param request       raw HttpServletRequest for metadata (URL, method)
-     * @param slug          identifier for the workflow
-     * @param requestBody   payload body (optional)
-     * @param headers       incoming headers
-     * @param queryParams   incoming query params
-     * @return              success or error response
+     * @param request      the raw servlet request, used primarily for logging
+     * @param slug         identifier for the specific task or workflow to execute
+     * @param requestBody  optional request body for POST payload
+     * @param headers      incoming HTTP headers
+     * @param queryParams  query string parameters
+     * @return             a response entity containing the result or error structure
      */
     @PostMapping
     public ResponseEntity<Object> handleRequest(
             HttpServletRequest request,
-            @RequestParam String slug,
+            @RequestParam("slug") String slug,
             @RequestBody(required = false) Map<String, Object> requestBody,
             @RequestHeader Map<String, Object> headers,
-            @RequestParam(required = false) Map<String, Object> queryParams
+            @RequestParam Map<String, Object> queryParams
     ) {
         try {
-            // Call orchestrator
-            Object result = orchestratorService.callHttpRequest(slug, headers, queryParams, requestBody , request);
-            return ResponseEntity.ok(result);
+            requestBody = requestBody != null ? requestBody : Collections.emptyMap();
+            headers = headers != null ? headers : Collections.emptyMap();
+            queryParams = queryParams != null ? queryParams : Collections.emptyMap();
 
+            Object result = orchestratorService.orchestrate(
+                    slug, headers, queryParams, requestBody, request
+            );
+
+            return ResponseEntity.ok(result);
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("Error: " + e.getMessage());
+            Map<String, Object> errorBody = new HashMap<>();
+            errorBody.put("error", "Workflow execution failed");
+            errorBody.put("message", e.getMessage() != null ? e.getMessage() : "Unknown error");
+            return ResponseEntity.status(500).body(errorBody);
         }
     }
 }

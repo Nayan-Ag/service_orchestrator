@@ -8,6 +8,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * MongoDB document to log API requests and responses.
@@ -69,4 +70,5 @@ public class RequestResponseLog {
         /** Full response object (can be a map, string, etc.) */
         private Object response;
     }
+
 }

@@ -5,18 +5,22 @@ import org.example.model.RequestResponseLog;
 import org.example.repository.RequestResponseLogRepository;
 import org.springframework.stereotype.Service;
 
+/**
+ * Service responsible for persisting structured
+ * request-response logs into MongoDB.
+ */
 @Service
 @RequiredArgsConstructor
 public class LoggingService {
 
-    private final RequestResponseLogRepository logRepo;
+    private final RequestResponseLogRepository logRepository;
 
     /**
-     * Saves the request-response log to MongoDB.
+     * Persists a request-response log document to MongoDB.
      *
-     * @param log DTO containing request and response data
+     * @param log the structured request-response data to be saved
      */
-    public void logRequestResponseLog(RequestResponseLog log) {
-        logRepo.save(log);
+    public void save(RequestResponseLog log) {
+        logRepository.save(log);
     }
 }

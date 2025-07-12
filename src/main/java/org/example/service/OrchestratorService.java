@@ -3,120 +3,134 @@ package org.example.service;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.example.model.*;
-import org.example.utils.LoggingUtils;
-import org.example.utils.WorkflowUtils;
+import org.example.utils.*;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * Service responsible for orchestrating dynamic, multi-step workflows
+ * based on a provided slug. It handles recursive execution of workflow steps,
+ * manages the execution context, and logs structured request/response payloads.
+ */
 @Service
 @RequiredArgsConstructor
 public class OrchestratorService {
 
-    /* -----------------------------------------------
-     * Dependencies
-     * --------------------------------------------- */
     private final WorkflowUtils workflowUtils;
+    private final WorkflowContextutils workflowContextutils;
     private final LoggingUtils loggingUtils;
     private final ApiCaller apiCaller;
 
-    /* -----------------------------------------------
-     * Shared state for this request
-     * --------------------------------------------- */
-    private final Map<String, Object> workflowContext = new HashMap<>();
+    /**
+     * Holds the API name currently being invoked (or last invoked).
+     */
+    private String currentApiName;
 
-    private Map<String, Object> requestHeaders;
-    private Map<String, Object> queryParams;
-    private Map<String, Object> requestBody;
-    private Workflow workflow;
-    private String requestSlug;
-    /* ==================================================
-     * Entry point: Trigger workflow by SLUG
-     * ================================================== */
-    public Map<String, Object> callHttpRequest(String slug,
-                                   Map<String, Object> headers,
-                                   Map<String, Object> params,
-                                   Map<String, Object> body,
-                                   HttpServletRequest request) throws Exception {
-        try{
-            this.requestSlug = slug;
-            this.requestHeaders = headers;
-            this.queryParams = params;
-            this.requestBody = body;
+    /**
+     * Main orchestrator entry point for executing the workflow steps
+     * based on the provided slug and input metadata.
+     *
+     * @param slug    unique task identifier
+     * @param headers incoming request headers
+     * @param params  query parameters
+     * @param body    request body
+     * @param req     servlet request (used for logging)
+     * @return        final context map containing per-step responses
+     * @throws Exception if any workflow step fails
+     */
+    public Map<String, Object> orchestrate(String slug,
+                                           Map<String, Object> headers,
+                                           Map<String, Object> params,
+                                           Map<String, Object> body,
+                                           HttpServletRequest req) throws Exception {
 
-            fetchAndExecuteTask();
-            loggingUtils.logRequestResponse(request, 200, slug, requestHeaders, queryParams, requestBody, workflowContext);
-            return workflowContext;
-        }catch(Exception e){
-            workflowContext.put("message" , e.getMessage());
-            loggingUtils.logRequestResponse(request , 500,slug, requestHeaders, queryParams, requestBody, workflowContext);
-            throw new Exception(e.getMessage());
+        Map<String, Object> ctx = new LinkedHashMap<>();
+
+        try {
+            executeWorkflow(slug, headers, params, body, ctx);
+            loggingUtils.logRequestAndResponse(req, 200, slug, headers, params, body, ctx);
+            return ctx;
+        } catch (Exception ex) {
+            loggingUtils.logRequestAndResponse(req, 500, slug, headers, params, body, ctx);
+            throw new Exception("Workflow execution failed", ex);
         }
     }
 
-    /* ==================================================
-     * Fetch Task by SLUG and trigger associated workflow
-     * ================================================== */
-    private void fetchAndExecuteTask() throws Exception {
-        try {
-            Task task = workflowUtils.getTaskBySlug(requestSlug);
-            if (task != null) {
-                executeWorkflow(task);
-            } else {
-                throw new RuntimeException("Task not found for slug");
-            }
-        } catch (Exception e) {
-            throw new Exception("Failed to fetch task" );
+    /**
+     * Kicks off the execution of the workflow based on the given slug.
+     *
+     * @param slug    unique task identifier
+     * @param headers headers from client request
+     * @param params  query params
+     * @param body    request body
+     * @param ctx     service context to store step responses
+     * @throws Exception if workflow or steps are missing
+     */
+    private void executeWorkflow(String slug,
+                                 Map<String, Object> headers,
+                                 Map<String, Object> params,
+                                 Map<String, Object> body,
+                                 Map<String, Object> ctx) throws Exception {
+
+        Task task = workflowUtils.fetchTaskBySlug(slug);
+        Workflow wf = workflowUtils.fetchWorkflowById(task.getWorkflowId());
+
+        if (wf.getSteps() == null || wf.getSteps().isEmpty()) {
+            workflowContextutils.putErrorResponse(
+                    ctx,
+                    "unknown_step",
+                    "Workflow contains no steps for slug: " + slug
+            );
+            throw new RuntimeException("No steps for slug: " + slug);
         }
+
+        invokeStepRecursively(wf, wf.getSteps().get(0), headers, params, body, ctx);
     }
 
-    /* ==================================================
-     * Execute the workflow associated with a task
-     * ================================================== */
-    private void executeWorkflow(Task task) throws Exception {
+    /**
+     * Recursively invokes each step of the workflow and stores the result
+     * (or error) in the shared execution context.
+     *
+     * @param wf      the workflow definition
+     * @param step    current step to execute
+     * @param headers request headers
+     * @param params  request query parameters
+     * @param body    request body
+     * @param ctx     shared context map for responses
+     * @return        true if next step exists and is executed
+     * @throws Exception if any API call fails
+     */
+    private boolean invokeStepRecursively(Workflow wf,
+                                          WorkflowSteps step,
+                                          Map<String, Object> headers,
+                                          Map<String, Object> params,
+                                          Map<String, Object> body,
+                                          Map<String, Object> ctx) throws Exception {
+
+        currentApiName = step.getApiName();
+
         try {
-            this.workflow = workflowUtils.getWorkflowById(task.get_id());
-
-            if (workflow != null && workflow.getSteps() != null && !workflow.getSteps().isEmpty()) {
-                WorkflowSteps firstStep = workflow.getSteps().get(0);
-                callApiStep(firstStep);
-            } else {
-                throw new RuntimeException("Workflow not found or contains no steps for task ID");
-            }
-        } catch (Exception e) {
-            throw new Exception("Workflow execution failed");
-        }
-    }
-
-    /* ==================================================
-     * Recursively call API steps based on next_step
-     * ================================================== */
-    private boolean callApiStep(WorkflowSteps step) throws Exception {
-        try {
-            Api api = workflowUtils.getApiByApiName(step.getApiName());
-            if (api == null) throw new RuntimeException("API not found: " + step.getApiName());
-
-            Map<String, Object> response = apiCaller.callApi(
-                    api, step, workflowContext, requestBody, queryParams, requestHeaders
+            Api apiMeta = workflowUtils.fetchApiByName(currentApiName);
+            Map<String, Object> resp = apiCaller.callApi(
+                    apiMeta, step, ctx, body, params, headers
             );
 
-            workflowContext.put(api.getApiName(), response);
+            Object raw = resp.get(currentApiName);
+            workflowContextutils.putSuccessResponse(ctx, currentApiName, raw);
 
-            String nextApi = (String) response.get("next_step");
-
-            if ("break_flow".equals(nextApi)) {
+            String next = (String) resp.getOrDefault("next_task", "break_flow");
+            if ("break_flow".equalsIgnoreCase(next)) {
                 return false;
             }
 
-            return callApiStep(workflowUtils.getWorkFlowStepsByApiname(workflow , nextApi));
+            WorkflowSteps nextStep = workflowUtils.fetchStepByApiName(wf, next);
+            return invokeStepRecursively(wf, nextStep, headers, params, body, ctx);
 
         } catch (Exception e) {
-            throw new Exception("API call failed ");
+            workflowContextutils.putErrorResponse(ctx, currentApiName, e.getMessage());
+            throw e;
         }
     }
-
-    /* ==================================================
-     * Log request and response into DB
-     * ================================================== */
 }

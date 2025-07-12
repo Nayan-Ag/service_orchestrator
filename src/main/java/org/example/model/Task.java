@@ -15,7 +15,9 @@ public class Task {
 
     /** MongoDB unique identifier */
     @Id
-    private ObjectId _id;
+    private  Object _id;
+
+    private ObjectId workflowId;
 
     /** Unique slug used to trigger or identify the task/workflow */
     private String slug;

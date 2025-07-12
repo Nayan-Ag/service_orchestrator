@@ -40,15 +40,4 @@ public class Api {
      */
     private List<Map<String, Object>> payload;
 
-    /**
-     * Optional flow definition for success handling.
-     * Example: { next: "task/api" , next_step: "taskName / apiName" } for chaining
-     */
-    private Map<String, Object> onSuccess;
-
-    /**
-     * Optional flow definition for failure handling.
-     * Example: { next: "task/api" , next_step: "taskName / apiName" } for chaining
-     */
-    private Map<String, Object> onFail;
 }
